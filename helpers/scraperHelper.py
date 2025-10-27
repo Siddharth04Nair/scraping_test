@@ -3,9 +3,10 @@ Scraper Helper - Web crawling using Crawl4AI
 """
 
 from typing import List, Dict, Optional
-from crawl4ai import AsyncWebCrawler, BrowserConfig
+from crawl4ai import AsyncWebCrawler
 from crawl4ai.async_configs import CrawlerRunConfig
-from crawl4ai.deep_crawling import BFSDeepCrawlStrategy
+from crawl4ai.deep_crawling import BestFirstCrawlingStrategy
+from crawl4ai.deep_crawling.scorers import KeywordRelevanceScorer
 import re
 from urllib.parse import urlparse
 from helpers.loggerHelper import get_logger
@@ -14,13 +15,17 @@ logger = get_logger(__name__)
 
 
 async def deep_crawl_website(
-    url: str, max_depth: Optional[int] = 2, max_pages: Optional[int] = 20
+    url: str,
+    crawler: AsyncWebCrawler,
+    max_depth: Optional[int] = 2,
+    max_pages: Optional[int] = 20,
 ) -> List[Dict[str, str]]:
     """
     Deep crawl a website and extract clean content from all pages.
 
     Args:
         url: Base URL to start crawling from
+        crawler: Shared AsyncWebCrawler instance
         max_depth: Maximum depth to crawl (None for unlimited, default: 2)
         max_pages: Maximum number of pages to crawl (default: 20)
 
@@ -35,24 +40,63 @@ async def deep_crawl_website(
     if not _is_valid_url(url):
         raise ValueError(f"Invalid URL: {url}")
 
-    logger.info(f"Starting deep crawl of {url} (max_depth={max_depth}, max_pages={max_pages})")
+    logger.info(
+        f"Starting deep crawl of {url} (max_depth={max_depth}, max_pages={max_pages})"
+    )
 
     try:
-        # Configure deep crawl strategy
-        deep_crawl_config = BFSDeepCrawlStrategy(
-            max_depth=max_depth if max_depth is not None else 999,
-            include_external=False,  # Stay within same domain
+        # Configure keyword-based scorer for prioritized crawling
+        keyword_scorer = KeywordRelevanceScorer(
+            keywords=[
+                # Contact information
+                "contact",
+                "phone",
+                "address",
+                "email",
+                "location",
+                "directions",
+                # Hours & scheduling
+                "hours",
+                "schedule",
+                "timing",
+                "appointments",
+                "availability",
+                "open",
+                "closed",
+                # Services & treatments
+                "services",
+                "treatment",
+                "care",
+                "emergency",
+                "surgery",
+                "vaccination",
+                # Staff & team
+                "staff",
+                "team",
+                "doctor",
+                "veterinarian",
+                "vet",
+                "about",
+                # Additional information
+                "faq",
+                "policy",
+                "policies",
+                "pricing",
+                "fees",
+            ],
+            weight=0.7,  # Importance of this scorer (0.0 to 1.0)
         )
 
-        # Configure browser
-        browser_config = BrowserConfig(
-            enable_stealth=True,
-            headless=False,
+        # Configure best-first crawl strategy for priority-based crawling
+        deep_crawl_config = BestFirstCrawlingStrategy(
+            max_depth=max_depth if max_depth is not None else 2,
+            url_scorer=keyword_scorer,
         )
 
-        # Configure crawler
+        # Configure crawler run
         crawler_config = CrawlerRunConfig(
             deep_crawl_strategy=deep_crawl_config,
+            exclude_all_images=True,
             verbose=False,
             only_text=True,
             word_count_threshold=10,  # Skip pages with very little content
@@ -60,9 +104,8 @@ async def deep_crawl_website(
             remove_overlay_elements=True,
         )
 
-        # Perform crawl
-        async with AsyncWebCrawler(config=browser_config) as crawler:
-            results = await crawler.arun(url, config=crawler_config)
+        # Perform crawl using shared crawler instance
+        results = await crawler.arun(url, config=crawler_config)
 
         # Process results
         pages_data = []
@@ -151,4 +194,3 @@ def _should_skip_url(url: str) -> bool:
             return True
 
     return False
-

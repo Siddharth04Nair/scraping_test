@@ -2,17 +2,14 @@
 Scraper Routes - Web scraping and data extraction endpoints
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field, validator
-from typing import Optional, List, Dict, Any
+from typing import Optional
 from helpers.scraperHelper import deep_crawl_website
 from helpers.geminiHelper import (
-    extract_clinic_data, 
+    extract_clinic_data,
     get_gemini_client,
-    ClinicData,
-    StaffMember,
-    FAQ,
-    BusinessHours
+    ClinicData
 )
 from helpers.loggerHelper import get_logger
 import re
@@ -28,16 +25,16 @@ class ScrapeRequest(BaseModel):
     url: str = Field(
         ...,
         description="Base URL of the website to crawl",
-        example="https://example-vet-clinic.com",
+        example="https://blue7vets.com/",
     )
     max_depth: Optional[int] = Field(
-        default=3,
+        default=1,
         description="Maximum depth to crawl (None for unlimited)",
         ge=1,
         le=10,
     )
     max_pages: Optional[int] = Field(
-        default=50, description="Maximum number of pages to crawl", ge=1, le=200
+        default=10, description="Maximum number of pages to crawl", ge=1, le=200
     )
 
     @validator("url")
@@ -69,10 +66,8 @@ class ScrapeResponse(BaseModel):
     error: Optional[str] = Field(None, description="Error message if unsuccessful")
 
 
-
-
 @router.post("/crawl", response_model=ScrapeResponse)
-async def crawl_and_extract(request: ScrapeRequest):
+async def crawl_and_extract(scrape_request: ScrapeRequest, request: Request):
     """
     Crawl a veterinary clinic website and extract structured data.
 
@@ -91,7 +86,7 @@ async def crawl_and_extract(request: ScrapeRequest):
     - Policies
     - Additional information
     """
-    logger.info(f"POST /v1/scraper/crawl - Crawling {request.url}")
+    logger.info(f"POST /v1/scraper/crawl - Crawling {scrape_request.url}")
 
     try:
         # Initialize Gemini client early to catch API key issues
@@ -105,19 +100,20 @@ async def crawl_and_extract(request: ScrapeRequest):
         # Step 1: Crawl the website
         try:
             pages_data = await deep_crawl_website(
-                url=request.url, max_depth=request.max_depth, max_pages=request.max_pages
+                url=scrape_request.url,
+                crawler=request.app.state.crawler,
+                max_depth=scrape_request.max_depth,
+                max_pages=scrape_request.max_pages,
             )
         except ValueError as e:
             raise HTTPException(status_code=400, detail=f"Invalid URL: {str(e)}")
         except Exception as e:
-            raise HTTPException(
-                status_code=500, detail=f"Crawling failed: {str(e)}"
-            )
+            raise HTTPException(status_code=500, detail=f"Crawling failed: {str(e)}")
 
         if not pages_data:
             return ScrapeResponse(
                 success=False,
-                url=request.url,
+                url=scrape_request.url,
                 pages_crawled=0,
                 data=None,
                 error="No content found on the website",
@@ -132,34 +128,15 @@ async def crawl_and_extract(request: ScrapeRequest):
             # Return crawled pages count but indicate extraction failed
             return ScrapeResponse(
                 success=False,
-                url=request.url,
+                url=scrape_request.url,
                 pages_crawled=len(pages_data),
                 data=None,
                 error=f"Data extraction failed: {str(e)}",
             )
-        
-        # Step 3: Return results
-        # clinic_data is already a ClinicData Pydantic model
-        
-        # Log extracted data to console
-        logger.info("="*80)
-        logger.info("EXTRACTED CLINIC DATA:")
-        logger.info("="*80)
-        logger.info(f"Name: {clinic_data.name}")
-        logger.info(f"Phone: {clinic_data.phone}")
-        logger.info(f"Email: {clinic_data.email}")
-        logger.info(f"Address: {clinic_data.address}")
-        logger.info(f"Business Hours: {clinic_data.business_hours}")
-        logger.info(f"Services: {clinic_data.services}")
-        logger.info(f"Staff: {clinic_data.staff}")
-        logger.info(f"FAQs: {clinic_data.faqs}")
-        logger.info(f"Policies: {clinic_data.policies}")
-        logger.info(f"Additional Info: {clinic_data.additional_info}")
-        logger.info("="*80)
 
         return ScrapeResponse(
             success=True,
-            url=request.url,
+            url=scrape_request.url,
             pages_crawled=len(pages_data),
             data=clinic_data,
             error=None,
@@ -169,13 +146,10 @@ async def crawl_and_extract(request: ScrapeRequest):
         raise
     except Exception as e:
         logger.error(f"Unexpected error in crawl_and_extract: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=500, detail=f"Unexpected error: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
 
 
 @router.get("/health")
 async def scraper_health():
     """Health check endpoint for scraper service"""
     return {"status": "healthy", "service": "scraper"}
-

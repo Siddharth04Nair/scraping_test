@@ -18,6 +18,7 @@ GEMINI_MODEL = "gemini-2.5-flash"
 # Pydantic models for response schema
 class StaffMember(BaseModel):
     """Staff member information"""
+
     name: str
     role: str
     specialization: Optional[str] = None
@@ -26,26 +27,55 @@ class StaffMember(BaseModel):
 
 class FAQ(BaseModel):
     """FAQ item"""
+
     question: str
     answer: str
 
 
+class ServiceHours(BaseModel):
+    """Hours for a specific service type"""
+
+    service_name: str  # e.g., "Regular OPD", "Emergency OPD", "Surgery Hours"
+    parsed: bool = (
+        False  # True if hours were successfully parsed into structured format
+    )
+    hours_string: Optional[str] = (
+        None  # Raw hours string (e.g., "8am to 8pm", "24 X 7") - used when parsed=False
+    )
+    open_time: Optional[str] = (
+        None  # Opening time in 24h format (e.g., "08:00") - used when parsed=True
+    )
+    close_time: Optional[str] = (
+        None  # Closing time in 24h format (e.g., "20:00") - used when parsed=True
+    )
+    is_24_7: Optional[bool] = None  # True if service is available 24/7
+    notes: Optional[str] = None  # Additional notes about this service
+
+
+class DayHours(BaseModel):
+    """Hours for a specific day with multiple service types"""
+
+    services: List[ServiceHours]  # List of different services and their hours
+
+
 class BusinessHours(BaseModel):
     """Business hours for each day of the week"""
-    monday: Optional[str] = None
-    tuesday: Optional[str] = None
-    wednesday: Optional[str] = None
-    thursday: Optional[str] = None
-    friday: Optional[str] = None
-    saturday: Optional[str] = None
-    sunday: Optional[str] = None
+
+    monday: Optional[DayHours | str] = None
+    tuesday: Optional[DayHours | str] = None
+    wednesday: Optional[DayHours | str] = None
+    thursday: Optional[DayHours | str] = None
+    friday: Optional[DayHours | str] = None
+    saturday: Optional[DayHours | str] = None
+    sunday: Optional[DayHours | str] = None
 
 
 class ClinicData(BaseModel):
     """Extracted veterinary clinic data"""
+
     name: Optional[str] = None
     phone: Optional[str | List[str]] = None
-    address: Optional[str] = None
+    address: Optional[str | List[str]] = None
     email: Optional[str | List[str]] = None
     business_hours: Optional[BusinessHours | str] = None
     services: Optional[List[str]] = None
@@ -101,10 +131,12 @@ async def extract_clinic_data(
             model=GEMINI_MODEL,
             contents=f"{prompt}\n\n{combined_content}",
             config=types.GenerateContentConfig(
-                temperature=0,  
+                temperature=0,
                 response_mime_type="application/json",
                 response_schema=ClinicData,  # Use Pydantic model for response schema
-                thinking_config=types.ThinkingConfig(thinking_budget=0),  # Disable thinking
+                thinking_config=types.ThinkingConfig(
+                    thinking_budget=0
+                ),  # Disable thinking
             ),
         )
 
@@ -176,8 +208,18 @@ INSTRUCTIONS:
 3. Extract the full street address including city, state, and zip code
 4. Extract email addresses (can be a single string or list of strings if multiple)
 5. Extract business hours for each day of the week (monday through sunday)
-   - Try to structure as separate fields for each day
-   - If only text description is available, provide it as a string
+   - If the clinic has different hours for different services (e.g., Regular OPD, Emergency OPD), extract as a structured DayHours object with a list of ServiceHours
+   - For each ServiceHours, try to parse the hours into a structured format:
+     * service_name: name of the service (e.g., "Regular OPD", "Emergency OPD", "Surgery Hours")
+     * If hours can be parsed into clear open/close times:
+       - Set parsed=True
+       - Set open_time and close_time in 24-hour format (e.g., "08:00", "20:00")
+       - If service is 24/7, set is_24_7=True
+     * If hours cannot be reliably parsed (ambiguous, complex, or unclear format):
+       - Set parsed=False
+       - Set hours_string to the original text (e.g., "8am to 8pm", "Call for hours")
+     * notes: optional additional information
+   - If hours are simple/uniform across all services, you can provide as a plain string for the entire day
 6. Extract all services offered (as a list)
 7. Extract all staff members with their name, role, specialization, and bio if available
 8. Extract FAQs with questions and answers
@@ -189,4 +231,3 @@ Only include information explicitly stated on the website.
 Be thorough and accurate.
 
 Website content:"""
-
