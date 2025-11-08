@@ -23,6 +23,9 @@ async def lifespan(app: FastAPI):
     """Lifespan context manager for startup and shutdown events"""
     # Startup: Initialize shared crawler instance
     logger.info("Initializing shared AsyncWebCrawler...")
+    # enable_stealth: Bypass bot-detection mechanisms on websites
+    # headless: Run browser without GUI for server deployment
+    # text_mode: Extract only text content for faster crawling
     browser_config = BrowserConfig(enable_stealth=True, headless=True, text_mode=True)
     crawler = AsyncWebCrawler(config=browser_config)
     await crawler.__aenter__()

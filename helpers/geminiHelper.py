@@ -15,74 +15,47 @@ logger = get_logger(__name__)
 GEMINI_MODEL = "gemini-2.5-flash"
 
 
-# Pydantic models for response schema
-class StaffMember(BaseModel):
-    """Staff member information"""
+# Pydantic models for response schema - Frontend compatible
+class Veterinarian(BaseModel):
+    """Veterinarian information"""
 
     name: str
-    role: str
-    specialization: Optional[str] = None
-    bio: Optional[str] = None
-
-
-class FAQ(BaseModel):
-    """FAQ item"""
-
-    question: str
-    answer: str
-
-
-class ServiceHours(BaseModel):
-    """Hours for a specific service type"""
-
-    service_name: str  # e.g., "Regular OPD", "Emergency OPD", "Surgery Hours"
-    parsed: bool = (
-        False  # True if hours were successfully parsed into structured format
-    )
-    hours_string: Optional[str] = (
-        None  # Raw hours string (e.g., "8am to 8pm", "24 X 7") - used when parsed=False
-    )
-    open_time: Optional[str] = (
-        None  # Opening time in 24h format (e.g., "08:00") - used when parsed=True
-    )
-    close_time: Optional[str] = (
-        None  # Closing time in 24h format (e.g., "20:00") - used when parsed=True
-    )
-    is_24_7: Optional[bool] = None  # True if service is available 24/7
-    notes: Optional[str] = None  # Additional notes about this service
-
-
-class DayHours(BaseModel):
-    """Hours for a specific day with multiple service types"""
-
-    services: List[ServiceHours]  # List of different services and their hours
+    specialties: str
+    acceptingNewPatients: bool = False
 
 
 class BusinessHours(BaseModel):
-    """Business hours for each day of the week"""
+    """Business hours for each day of the week - simple string format"""
 
-    monday: Optional[DayHours | str] = None
-    tuesday: Optional[DayHours | str] = None
-    wednesday: Optional[DayHours | str] = None
-    thursday: Optional[DayHours | str] = None
-    friday: Optional[DayHours | str] = None
-    saturday: Optional[DayHours | str] = None
-    sunday: Optional[DayHours | str] = None
+    monday: str = ""
+    tuesday: str = ""
+    wednesday: str = ""
+    thursday: str = ""
+    friday: str = ""
+    saturday: str = ""
+    sunday: str = ""
 
 
 class ClinicData(BaseModel):
-    """Extracted veterinary clinic data"""
+    """Extracted veterinary clinic data - matches frontend form structure exactly"""
 
-    name: Optional[str] = None
-    phone: Optional[str | List[str]] = None
-    address: Optional[str | List[str]] = None
-    email: Optional[str | List[str]] = None
-    business_hours: Optional[BusinessHours | str] = None
-    services: Optional[List[str]] = None
-    staff: Optional[List[StaffMember]] = None
-    faqs: Optional[List[FAQ]] = None
-    policies: Optional[str | List[str]] = None
-    additional_info: Optional[str] = None
+    name: str = ""
+    phoneNumber: str = ""
+    address: str = ""
+    city: str = ""
+    state: str = ""
+    pincode: str = ""
+    website: str = ""
+    email: str = ""
+    businessHours: BusinessHours = BusinessHours()
+    is_24_7: bool = False
+    holidayClosures: str = ""
+    veterinarians: List[Veterinarian] = []
+    practiceManager: str = ""
+    headTechnician: str = ""
+    servicesOffered: List[str] = []
+    servicesNotOffered: str = ""
+    speciesTreated: List[str] = []
 
 
 def get_gemini_client() -> genai.Client:
@@ -200,33 +173,90 @@ def _build_extraction_prompt() -> str:
     """
     return """You are a data extraction specialist. Extract structured information about a veterinary clinic from the provided website content.
 
-Extract all available information about the clinic. The data will be validated against a strict schema.
+Extract all available information about the clinic. The data will be validated against a strict schema and sent directly to a frontend form.
+
+IMPORTANT: Return data in this exact structure - it will populate a form with ZERO transformation.
 
 INSTRUCTIONS:
-1. Extract the full business name of the veterinary clinic
-2. Extract phone numbers (can be a single string or list of strings if multiple)
-3. Extract the full street address including city, state, and zip code
-4. Extract email addresses (can be a single string or list of strings if multiple)
-5. Extract business hours for each day of the week (monday through sunday)
-   - If the clinic has different hours for different services (e.g., Regular OPD, Emergency OPD), extract as a structured DayHours object with a list of ServiceHours
-   - For each ServiceHours, try to parse the hours into a structured format:
-     * service_name: name of the service (e.g., "Regular OPD", "Emergency OPD", "Surgery Hours")
-     * If hours can be parsed into clear open/close times:
-       - Set parsed=True
-       - Set open_time and close_time in 24-hour format (e.g., "08:00", "20:00")
-       - If service is 24/7, set is_24_7=True
-     * If hours cannot be reliably parsed (ambiguous, complex, or unclear format):
-       - Set parsed=False
-       - Set hours_string to the original text (e.g., "8am to 8pm", "Call for hours")
-     * notes: optional additional information
-   - If hours are simple/uniform across all services, you can provide as a plain string for the entire day
-6. Extract all services offered (as a list)
-7. Extract all staff members with their name, role, specialization, and bio if available
-8. Extract FAQs with questions and answers
-9. Extract policies (can be a single string or list of strings)
-10. Extract any additional relevant information (parking, accessibility, languages spoken, etc.)
+1. name: Extract the full business name of the veterinary clinic (string)
+   - If none found, return empty string ""
 
-If a field is not found on the website, omit it or use null.
+2. phoneNumbers: Extract ALL phone numbers as a comma-separated string
+   - Format: "(555) 123-4567, (555) 123-4568" or "(555) 123-4567"
+   - If multiple numbers, separate with comma and space
+   - If none found, return empty string ""
+
+3. address: Extract the primary street address only (string)
+   - Format: "123 Oak Street" (street number and name only)
+   - If none found, return empty string ""
+
+4. city: Extract the city name (string)
+   - If none found, return empty string ""
+
+5. state: Extract the state name or abbreviation (string)
+   - If none found, return empty string ""
+
+6. pincode: Extract the ZIP/postal code (string)
+   - If none found, return empty string ""
+
+7. website: Extract the clinic's website URL (string)
+   - If none found, return empty string ""
+
+8. email Extract one or more email address
+
+9. businessHours: Extract business hours as a simple object with day keys
+   - Format: Simple strings like "8:00 AM - 6:00 PM", "Closed", or "24/7"
+   - Structure:
+     {
+       "monday": "8:00 AM - 6:00 PM",
+       "tuesday": "8:00 AM - 6:00 PM",
+       "wednesday": "8:00 AM - 6:00 PM",
+       "thursday": "8:00 AM - 6:00 PM",
+       "friday": "8:00 AM - 6:00 PM",
+       "saturday": "9:00 AM - 2:00 PM",
+       "sunday": "Closed"
+     }
+   - If hours not found for a day, use empty string ""
+   - If clinic is 24/7, still populate hours (frontend will handle is_24_7 flag)
+
+10. is_24_7: Set to true if clinic operates 24/7, otherwise false (boolean)
+    - Default: false
+
+11. holidayClosures: Extract information about holiday closures (string)
+    - Format: "Closed for Thanksgiving (Nov 28). Closed at 12 PM on Christmas Eve (Dec 24)."
+    - If none found, return empty string ""
+
+12. veterinarians: Extract ALL veterinarians as an array of objects
+    - Structure: {"name": "Dr. Name, DVM", "specialties": "Area of expertise", "acceptingNewPatients": true/false}
+    - acceptingNewPatients defaults to false if not specified
+    - If none found, return empty array []
+
+13. practiceManager: Extract the practice manager's name (string)
+    - If none found, return empty string ""
+
+14. headTechnician: Extract the head technician's name and credentials (string)
+    - Format: "Name, CVT" or "Name, LVT"
+    - If none found, return empty string ""
+
+15. servicesOffered: Extract ALL services offered as an array of strings
+    - Format: ["Service 1", "Service 2", "Service 3"]
+    - If none found, return empty array []
+
+16. servicesNotOffered: Extract services explicitly NOT offered (string)
+    - Format: "Boarding, Grooming, Mobile veterinary visits"
+    - Comma-separated if multiple
+    - If none found, return empty string ""
+
+17. speciesTreated: Extract ALL species/animal types treated as an array of strings
+    - Format: ["Dogs", "Cats", "Rabbits", "Birds"]
+    - If none found, return empty array []
+
+EMPTY VALUES STRATEGY:
+- Arrays: Use empty array [] if no data found
+- Strings: Use empty string "" if no data found
+- Booleans: Use false as default
+- businessHours object: Return full structure with empty strings for each day if no data found
+
 Only include information explicitly stated on the website.
 Be thorough and accurate.
 
